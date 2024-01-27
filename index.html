@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Linux Kernel GENMASK Calculator</title>
+	<style type="text/css">
+		input {
+			width: 4em;
+			font-family: monospace;
+		}
+		form {
+			font-family: monospace;
+		}
+
+		.error {
+			color: red;
+		}
+	</style>
+</head>
+<body>
+	<h2>GENMASK</h2>
+	<form name="genmask" data-bits="32">
+		GENMASK(
+			h=<input name="h" type="number" placeholder="h" value="0" min="0">,
+			l=<input name="l" type="number" placeholder="l" value="0" min="0">
+		)
+		= <input placeholder="0x0" name="hex" style="width: 10em;">
+		= <input placeholder="0b0" name="bin" style="width: 30em;">
+
+		<div class="error"></div>
+	</form>
+
+	<h2>GENMASK_ULL</h2>
+	<form name="genmask_ull" data-bits="64">
+		GENMASK(
+			h=<input name="h" type="number" placeholder="h" value="0" min="0">,
+			l=<input name="l" type="number" placeholder="l" value="0" min="0">
+		)
+		= <input placeholder="0x0" name="hex" style="width: 15em;">
+		= <input placeholder="0b0" name="bin" style="width: 50em">
+
+		<div class="error"></div>
+	</form>
+
+	<script type="text/javascript">
+		document.querySelectorAll('form').forEach(form => {
+			const bits = parseInt(form.dataset.bits)
+			const inputs = {
+				'h': form.querySelector('[name=h]'),
+				'l': form.querySelector('[name=l]'),
+				'hex': form.querySelector('[name=hex]'),
+				'bin': form.querySelector('[name=bin]'),
+			}
+
+			for(const k in inputs) {
+				const input = inputs[k];
+				input.addEventListener('change', () => {
+					updateAndValidate(form, inputs, bits, k)
+				})
+			}
+
+			updateAndValidate(form, inputs, bits, 'h')
+		})
+
+		function updateAndValidate(form, inputs, bits, changedInput, newValue) {
+			switch(changedInput) {
+				case 'h':
+				case 'l': {
+					const newMask = maskFromHL(inputs.h.value, inputs.l.value, bits)
+					if(handleError(form, newMask.error)) {
+						inputs.hex.value = inputs.bin.value = ''
+						break
+					}
+					inputs.hex.value = maskToHex(newMask, bits)
+					inputs.bin.value = maskToBin(newMask, bits)
+					break
+				}
+
+				case 'hex': {
+					const newMask = maskFromHex(inputs.hex.value, bits)
+					if(handleError(form, newMask.error)) {
+						inputs.h.value = inputs.l.value = inputs.bin.value = ''
+						break
+					}
+					inputs.h.value = maskToH(newMask)
+					inputs.l.value = maskToL(newMask)
+					inputs.bin.value = maskToBin(newMask, bits)
+					break
+				}
+
+				case 'bin': {
+					const newMask = maskFromBin(inputs.bin.value, bits)
+					if(handleError(form, newMask.error)) {
+						inputs.h.value = inputs.l.value = inputs.hex.value = ''
+						break
+					}
+					inputs.h.value = maskToH(newMask)
+					inputs.l.value = maskToL(newMask)
+					inputs.hex.value = maskToHex(newMask, bits)
+					break
+				}
+			}
+
+			function maskFromHL(ht, lt, bits) {
+				const
+					h = parseInt(ht || 0),
+					l = parseInt(lt || 0)
+
+				if(l < 0) return {error: 'l < 0'}
+				if(h < 0) return {error: 'h < 0'}
+				if(h >= bits) return {error: 'h >= bits ('+bits+')'}
+				if(l > h) return {error: 'l > h'}
+				return {h: h, l: l}
+			}
+			function maskFromHex(hex, bits) {
+				hex = hex.replaceAll(' ', '')
+				if(!hex.startsWith('0x')) {
+					hex = '0x' + hex
+				}
+				const int = BigInt(hex)
+				const bin = int.toString(2)
+				return maskFromBin(bin, bits)
+			}
+			function maskFromBin(bin, bits) {
+				if(bin.startsWith('0b')) {
+					bin = bin.substr(2)
+				}
+				bin = bin.replaceAll(' ', '')
+				bin = bin.padStart(bits, '0')
+
+
+				let l = 0
+				while(bin[bin.length-1] == '0') {
+					bin = bin.substring(0, bin.length-1)
+					l++
+				}
+				if(l >= bits) {
+					return {error: 'no bits set'}
+				}
+
+				let h = l - 1
+				while(bin[bin.length-1] == '1') {
+					bin = bin.substring(0, bin.length-1)
+					h++
+				}
+
+				while(bin.length > 0) {
+					if(bin[0] != '0' && bin[0] != '1') {
+						return {error: 'unexpected character in binary string'}
+					}
+
+					if(bin[0] != '0') {
+						return {error: 'bits form no continous island'}
+					}
+
+					bin = bin.substring(1)
+				}
+
+				return {h: h, l: l}
+			}
+
+			function maskToHex(mask, bits) {
+				const int = BigInt('0b'+maskToBits(mask, bits))
+				const hex = int.toString(16).padStart(bits / 4, '0')
+				return '0x' + formatChunks(hex)
+			}
+			function maskToBits(mask, bits) {
+				const
+					zeros_before = bits - mask.h - 1,
+					ones = mask.h - mask.l + 1,
+					zeros_after = mask.l
+
+				return '0'.repeat(zeros_before) + '1'.repeat(ones) + '0'.repeat(zeros_after)
+			}
+
+			function maskToBin(mask, bits) {
+				return '0b' + formatChunks(maskToBits(mask, bits))
+			}
+			function maskToH(mask) { return mask.h }
+			function maskToL(mask) { return mask.l }
+
+			function chunk(str, size) {
+				const numChunks = Math.ceil(str.length / size)
+				const chunks = new Array(numChunks)
+
+				for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
+					chunks[i] = str.substr(o, size)
+				}
+
+				return chunks
+			}
+
+			function formatChunks(str) {
+				return chunk(str, 4).join(' ')
+			}
+
+			function handleError(form, error) {
+				form.querySelector('.error').innerText = error ? error : ''
+				return error != undefined
+			}
+		}
+	</script>
+</body>
+</html>
